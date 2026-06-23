@@ -1,5 +1,10 @@
 from rcc.config import Profile
-from rcc.ssh import build_remote_command, build_rsync_e_string, build_ssh_args
+from rcc.ssh import (
+    build_remote_command,
+    build_remote_shell_command,
+    build_rsync_e_string,
+    build_ssh_args,
+)
 
 
 def make_profile(**kw) -> Profile:
@@ -60,3 +65,14 @@ def test_build_remote_command_no_quoting_needed():
     cmd = build_remote_command("/srv/app", ["ls"])
     assert "cd -- /srv/app" in cmd
     assert "ls" in cmd
+
+
+def test_build_remote_shell_command_passes_script_verbatim():
+    # The whole reason -s/--shell exists (issue #1): pipelines, $vars, and
+    # nested quotes must survive unquoted so the remote shell interprets them.
+    cmd = build_remote_shell_command("/srv/app", "squeue -u $USER | head")
+    assert "set -euo pipefail" in cmd
+    assert "cd -- /srv/app" in cmd
+    assert "squeue -u $USER | head" in cmd
+    # the snippet must NOT be collapsed into a single quoted token
+    assert "'squeue -u $USER | head'" not in cmd

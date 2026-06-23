@@ -12,6 +12,7 @@ from rcc import __version__
 from rcc.commands import close as close_cmd
 from rcc.commands import config_cmd
 from rcc.commands import init as init_cmd
+from rcc.commands import job as job_cmd
 from rcc.commands import pull as pull_cmd
 from rcc.commands import push as push_cmd
 from rcc.commands import run as run_cmd
@@ -90,6 +91,18 @@ app.command(name="shell")(_wrap(shell_cmd.shell))
 app.command(name="status")(_wrap(status_cmd.status))
 app.command(name="close")(_wrap(close_cmd.close))
 app.command(name="config")(_wrap(config_cmd.config))
+
+job_app = typer.Typer(
+    help="Slurm job management: submit, list, status, tail, cancel.",
+    no_args_is_help=True,
+    add_completion=False,
+)
+job_app.command(name="submit")(_wrap(job_cmd.submit))
+job_app.command(name="list")(_wrap(job_cmd.list_jobs))
+job_app.command(name="status")(_wrap(job_cmd.status))
+job_app.command(name="tail")(_wrap(job_cmd.tail))
+job_app.command(name="cancel")(_wrap(job_cmd.cancel))
+app.add_typer(job_app, name="job")
 
 
 @app.command(name="version")

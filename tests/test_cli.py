@@ -72,6 +72,101 @@ def test_cli_run_propagates_nonzero(rcc_project: Path, monkeypatch):
         assert result.exit_code == 42
 
 
+def test_cli_run_shell_mode_passes_script(rcc_project: Path, monkeypatch):
+    monkeypatch.chdir(rcc_project)
+    with patch("rcc.commands.run.run_remote", return_value=0) as run_fn:
+        result = runner.invoke(app, ["run", "-s", "squeue -u $USER | head"])
+        assert result.exit_code == 0, result.output
+        assert run_fn.call_args.kwargs["script"] == "squeue -u $USER | head"
+        assert run_fn.call_args.args[1] == []
+
+
+def test_cli_run_shell_mode_rejects_extra_args(rcc_project: Path, monkeypatch):
+    monkeypatch.chdir(rcc_project)
+    result = runner.invoke(app, ["run", "-s", "echo hi", "extra"])
+    assert result.exit_code != 0
+
+
+def test_cli_job_submit_calls_slurm(rcc_project: Path, monkeypatch):
+    monkeypatch.chdir(rcc_project)
+    with patch("rcc.slurm.submit", return_value=0) as submit_fn:
+        result = runner.invoke(app, ["job", "submit", "job.sh", "--extra-env", "FOO=bar"])
+        assert result.exit_code == 0, result.output
+        assert submit_fn.call_args.args[1] == "job.sh"
+        assert submit_fn.call_args.args[2] == [("FOO", "bar")]
+
+
+def test_cli_job_submit_bad_env(rcc_project: Path, monkeypatch):
+    monkeypatch.chdir(rcc_project)
+    result = runner.invoke(app, ["job", "submit", "job.sh", "--extra-env", "NOEQUALS"])
+    assert result.exit_code != 0
+    assert "K=V" in result.output
+
+
+def test_cli_job_submit_propagates_nonzero(rcc_project: Path, monkeypatch):
+    monkeypatch.chdir(rcc_project)
+    with patch("rcc.slurm.submit", return_value=1):
+        result = runner.invoke(app, ["job", "submit", "job.sh"])
+        assert result.exit_code == 1
+
+
+def test_cli_job_submit_wait_and_dependency(rcc_project: Path, monkeypatch):
+    monkeypatch.chdir(rcc_project)
+    with patch("rcc.slurm.submit", return_value=0) as submit_fn:
+        result = runner.invoke(
+            app, ["job", "submit", "job.sh", "-W", "--dependency", "afterok:1"]
+        )
+        assert result.exit_code == 0, result.output
+        assert submit_fn.call_args.kwargs["wait"] is True
+        assert submit_fn.call_args.kwargs["dependency"] == "afterok:1"
+
+
+def test_cli_job_submit_wait_propagates_job_exit_code(rcc_project: Path, monkeypatch):
+    monkeypatch.chdir(rcc_project)
+    with patch("rcc.slurm.submit", return_value=7):
+        result = runner.invoke(app, ["job", "submit", "job.sh", "--wait"])
+        assert result.exit_code == 7
+
+
+def test_cli_job_list_calls_slurm(rcc_project: Path, monkeypatch):
+    monkeypatch.chdir(rcc_project)
+    with patch("rcc.slurm.list_jobs", return_value=0) as fn:
+        result = runner.invoke(app, ["job", "list"])
+        assert result.exit_code == 0, result.output
+        assert fn.call_args.args[0].host == "alpha.example.com"
+
+
+def test_cli_job_status_calls_slurm(rcc_project: Path, monkeypatch):
+    monkeypatch.chdir(rcc_project)
+    with patch("rcc.slurm.status", return_value=0) as fn:
+        result = runner.invoke(app, ["job", "status", "524614"])
+        assert result.exit_code == 0, result.output
+        assert fn.call_args.args[1] == "524614"
+
+
+def test_cli_job_tail_follow_and_file(rcc_project: Path, monkeypatch):
+    monkeypatch.chdir(rcc_project)
+    with patch("rcc.slurm.tail", return_value=0) as fn:
+        result = runner.invoke(app, ["job", "tail", "7", "-f", "--file", "x.log"])
+        assert result.exit_code == 0, result.output
+        assert fn.call_args.kwargs["follow"] is True
+        assert fn.call_args.kwargs["filename"] == "x.log"
+
+
+def test_cli_job_cancel_calls_slurm(rcc_project: Path, monkeypatch):
+    monkeypatch.chdir(rcc_project)
+    with patch("rcc.slurm.cancel", return_value=0) as fn:
+        result = runner.invoke(app, ["job", "cancel", "9"])
+        assert result.exit_code == 0, result.output
+        assert fn.call_args.args[1] == "9"
+
+
+def test_cli_job_no_rcc_dir_exits_2(tmp_path: Path):
+    result = _rcc(["job", "list"], cwd=tmp_path)
+    assert result.returncode == 2
+    assert "no .rcc/" in result.stderr
+
+
 def test_cli_status_no_ssh_exits_1(rcc_project: Path, monkeypatch):
     monkeypatch.chdir(rcc_project)
     with patch("rcc.commands.status.shutil.which", return_value=None):

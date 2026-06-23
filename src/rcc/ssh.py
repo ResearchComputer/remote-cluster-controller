@@ -62,6 +62,29 @@ def build_remote_command(remote_dir: str, argv: list[str]) -> str:
     )
 
 
+def build_remote_shell_command(remote_dir: str, script: str) -> str:
+    """Like :func:`build_remote_command`, but for a raw shell ``script``.
+
+    The script is inserted verbatim (not per-token quoted) so pipelines, variable
+    expansion, redirects, and nested quotes survive the trip to the remote
+    shell. This backs ``rcc run -s`` and the Slurm wrappers in :mod:`rcc.slurm`.
+    """
+    quoted_dir = shlex.quote(remote_dir)
+    message = shlex.quote(f"error: remote directory does not exist: {remote_dir}")
+    return (
+        "set -euo pipefail; "
+        f"if [[ ! -d {quoted_dir} ]]; then printf '%s\\n' {message} >&2; exit 1; fi; "
+        f"cd -- {quoted_dir}; "
+        f"{script}"
+    )
+
+
+def _remote_command(remote_dir: str, argv: list[str], script: str | None) -> str:
+    if script is not None:
+        return build_remote_shell_command(remote_dir, script)
+    return build_remote_command(remote_dir, argv)
+
+
 def _ensure_control_dir(profile: Profile) -> None:
     path = Path(os.path.expanduser(profile.ssh_control_dir))
     path.mkdir(parents=True, exist_ok=True)
@@ -75,15 +98,42 @@ def _primary_available() -> bool:
     return shutil.which("ssh") is not None
 
 
-def run_remote(profile: Profile, argv: list[str], *, tty: bool = False) -> int:
-    """Run argv on remote inside profile.remote_dir. Returns the remote exit code."""
+def run_remote(
+    profile: Profile,
+    argv: list[str],
+    *,
+    script: str | None = None,
+    tty: bool = False,
+) -> int:
+    """Run argv (or a raw shell ``script``) on remote inside profile.remote_dir.
+
+    Pass ``script`` to interpret a shell snippet verbatim (pipelines, globs,
+    variable expansion) — the ``rcc run -s`` path and the basis of the Slurm
+    wrappers in :mod:`rcc.slurm`.
+    """
     if _primary_available():
         _ensure_control_dir(profile)
-        remote_cmd = build_remote_command(profile.remote_dir, argv)
+        remote_cmd = _remote_command(profile.remote_dir, argv, script)
         full = build_ssh_args(profile, mode="run", tty=tty) + [_bash_lc_arg(remote_cmd)]
         return subprocess.run(full).returncode
     log.warning("ssh not on PATH; using paramiko fallback")
-    return _paramiko_run_remote(profile, argv, tty=tty)
+    return _paramiko_run_remote(profile, argv, script=script, tty=tty)
+
+
+def run_remote_capture(
+    profile: Profile,
+    argv: list[str],
+    *,
+    script: str | None = None,
+    tty: bool = False,
+) -> subprocess.CompletedProcess[str]:
+    """Like :func:`run_remote`, but capture stdout/stderr instead of streaming."""
+    if _primary_available():
+        _ensure_control_dir(profile)
+        remote_cmd = _remote_command(profile.remote_dir, argv, script)
+        full = build_ssh_args(profile, mode="run", tty=tty) + [_bash_lc_arg(remote_cmd)]
+        return subprocess.run(full, capture_output=True, text=True)
+    return _paramiko_run_remote_capture(profile, argv, script=script, tty=tty)
 
 
 def ensure_remote_dir(profile: Profile) -> None:
@@ -143,10 +193,12 @@ def _bash_lc_arg(command: str) -> str:
     return f"bash -lc {shlex.quote(command)}"
 
 
-def _paramiko_run_remote(profile: Profile, argv: list[str], *, tty: bool) -> int:
+def _paramiko_run_remote(
+    profile: Profile, argv: list[str], *, script: str | None, tty: bool
+) -> int:
     client = _paramiko_client(profile)
     try:
-        remote_cmd = build_remote_command(profile.remote_dir, argv)
+        remote_cmd = _remote_command(profile.remote_dir, argv, script)
         transport = client.get_transport()
         if transport is None:
             raise RemoteError("paramiko: could not open transport")
@@ -172,6 +224,47 @@ def _paramiko_run_remote(profile: Profile, argv: list[str], *, tty: bool) -> int
             ):
                 break
         return channel.recv_exit_status()
+    finally:
+        client.close()
+
+
+def _paramiko_run_remote_capture(
+    profile: Profile, argv: list[str], *, script: str | None, tty: bool
+) -> subprocess.CompletedProcess[str]:
+    client = _paramiko_client(profile)
+    try:
+        remote_cmd = _remote_command(profile.remote_dir, argv, script)
+        transport = client.get_transport()
+        if transport is None:
+            raise RemoteError("paramiko: could not open transport")
+        channel = transport.open_session()
+        if tty:
+            channel.get_pty()
+        channel.exec_command(f"bash -lc {shlex.quote(remote_cmd)}")
+        out = bytearray()
+        err = bytearray()
+        while True:
+            if channel.recv_ready():
+                data = channel.recv(4096)
+                if data:
+                    out.extend(data)
+            if channel.recv_stderr_ready():
+                data = channel.recv_stderr(4096)
+                if data:
+                    err.extend(data)
+            if (
+                channel.exit_status_ready()
+                and not channel.recv_ready()
+                and not channel.recv_stderr_ready()
+            ):
+                break
+        code = channel.recv_exit_status()
+        return subprocess.CompletedProcess(
+            args=argv,
+            returncode=code,
+            stdout=out.decode("utf-8", "replace"),
+            stderr=err.decode("utf-8", "replace"),
+        )
     finally:
         client.close()
 
