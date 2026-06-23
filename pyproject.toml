@@ -1,5 +1,5 @@
 [project]
-name = "rcc"
+name = "remote-cluster-controller"
 version = "0.1.1"
 description = "Remote cluster controller: push, pull, run, shell over SSH + rsync"
 readme = "README.md"

@@ -6,10 +6,12 @@ Remote cluster controller. Generalizes the classic `ssh host "cd dir && cmd"` +
 ## Install
 
 ```bash
-uv tool install rcc
+uv tool install remote-cluster-controller
 # or
-pipx install rcc
+pipx install remote-cluster-controller
 ```
+
+Both install the `rcc` command.
 
 ## Quickstart
 
