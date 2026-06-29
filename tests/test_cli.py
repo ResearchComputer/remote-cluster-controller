@@ -113,9 +113,7 @@ def test_cli_job_submit_propagates_nonzero(rcc_project: Path, monkeypatch):
 def test_cli_job_submit_wait_and_dependency(rcc_project: Path, monkeypatch):
     monkeypatch.chdir(rcc_project)
     with patch("rcc.slurm.submit", return_value=0) as submit_fn:
-        result = runner.invoke(
-            app, ["job", "submit", "job.sh", "-W", "--dependency", "afterok:1"]
-        )
+        result = runner.invoke(app, ["job", "submit", "job.sh", "-W", "--dependency", "afterok:1"])
         assert result.exit_code == 0, result.output
         assert submit_fn.call_args.kwargs["wait"] is True
         assert submit_fn.call_args.kwargs["dependency"] == "afterok:1"

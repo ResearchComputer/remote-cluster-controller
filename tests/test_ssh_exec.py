@@ -80,10 +80,34 @@ def test_ensure_remote_dir_mkdirs(fake_run):
     assert "mkdir -p -- /srv/app" in fake_run.call_args.args[0][-1]
 
 
+def test_ensure_remote_path_mkdirs_arbitrary(fake_run):
+    from rcc.ssh import ensure_remote_path
+
+    fake_run.return_value = subprocess.CompletedProcess(args=[], returncode=0)
+    ensure_remote_path(make_profile(), "/srv/app/jobs/sweep")
+    assert "mkdir -p -- /srv/app/jobs/sweep" in fake_run.call_args.args[0][-1]
+
+
+def test_ensure_remote_path_raises_on_failure(fake_run):
+    from rcc.ssh import ensure_remote_path
+
+    fake_run.return_value = subprocess.CompletedProcess(args=[], returncode=1)
+    with pytest.raises(RemoteError):
+        ensure_remote_path(make_profile(), "/srv/app/sub")
+
+
 def test_ensure_remote_dir_raises_on_failure(fake_run):
     fake_run.return_value = subprocess.CompletedProcess(args=[], returncode=1)
     with pytest.raises(RemoteError):
         ensure_remote_dir(make_profile())
+
+
+def test_run_remote_passes_env_and_cwd(fake_run):
+    fake_run.return_value = subprocess.CompletedProcess(args=[], returncode=0)
+    run_remote(make_profile(), ["env"], env={"X": "1"}, cwd="/srv/app/sub")
+    joined = fake_run.call_args.args[0][-1]
+    assert "export X=1;" in joined
+    assert "cd -- /srv/app/sub" in joined
 
 
 def test_mux_check_returns_true_when_open(fake_run):
@@ -128,7 +152,7 @@ def test_run_remote_uses_paramiko_when_ssh_missing(monkeypatch):
     monkeypatch.setattr("rcc.ssh.shutil.which", lambda name: None)
     called = {}
 
-    def fake_fallback(profile, argv, *, script, tty):
+    def fake_fallback(profile, argv, *, script, tty, env=None, cwd=None):
         called["profile"] = profile
         called["argv"] = argv
         called["script"] = script

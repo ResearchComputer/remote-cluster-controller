@@ -1,6 +1,6 @@
 [project]
 name = "remote-cluster-controller"
-version = "0.1.1"
+version = "0.3.0"
 description = "Remote cluster controller: push, pull, run, shell over SSH + rsync"
 readme = "README.md"
 requires-python = ">=3.11"

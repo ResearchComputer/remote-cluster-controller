@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 
@@ -12,6 +13,9 @@ from rcc.ssh import mux_check
 
 
 def status(
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit {controlmaster_open, host} as JSON."
+    ),
     profile: str | None = typer.Option(None, "--profile"),
     host: str | None = typer.Option(None, "--host"),
     remote_dir: str | None = typer.Option(None, "--remote-dir"),
@@ -30,7 +34,11 @@ def status(
         host_override=overrides.host,
         remote_dir_override=overrides.remote_dir,
     )
-    if mux_check(resolved):
+    open_ = mux_check(resolved)
+    if json_output:
+        typer.echo(json.dumps({"controlmaster_open": open_, "host": resolved.host}))
+        return
+    if open_:
         typer.echo(f"ControlMaster open for {resolved.host}.")
     else:
         typer.echo(f"ControlMaster not open for {resolved.host}.")

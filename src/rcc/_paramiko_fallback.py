@@ -12,24 +12,43 @@ class TransferPlan:
     relative_path: str
 
 
-def build_matcher(exclude_from: Path, extra_excludes: list[str]) -> GitignoreMatcher:
+def build_matcher(
+    exclude_from: Path | None,
+    extra_excludes: list[str],
+    includes: list[str] | None = None,
+) -> GitignoreMatcher:
+    """Build a gitignore matcher.
+
+    ``exclude_from`` is the project ``rccignore`` (None ⇒ no file-based rules).
+    ``includes`` are turned into gitignore negation rules (``!pattern``) so a
+    path the excludes would drop can be forced back in. Note: like gitignore, a
+    negation cannot re-include a path beneath an excluded *directory*; for full
+    include semantics use the rsync path.
+    """
     lines: list[str] = []
-    if exclude_from.exists():
-        lines.extend(exclude_from.read_text().splitlines())
+    if exclude_from is not None:
+        try:
+            lines.extend(exclude_from.read_text().splitlines())
+        except OSError:
+            pass
     lines.extend(extra_excludes)
+    for pattern in includes or []:
+        lines.append(f"!{pattern}")
     return GitignoreMatcher(lines)
 
 
 def plan_push_transfers(
-    source: Path, *, exclude_from: Path, extra_excludes: list[str]
+    source: Path,
+    *,
+    exclude_from: Path | None = None,
+    extra_excludes: list[str] | None = None,
+    includes: list[str] | None = None,
 ) -> list[TransferPlan]:
-    matcher = build_matcher(exclude_from, extra_excludes)
+    matcher = build_matcher(exclude_from, extra_excludes or [], includes)
     plans: list[TransferPlan] = []
     for path in source.rglob("*"):
         rel = path.relative_to(source).as_posix()
         if path.is_dir():
-            if matcher.match(rel, is_dir=True):
-                continue
             continue
         if matcher.match(rel, is_dir=False):
             continue
@@ -38,11 +57,16 @@ def plan_push_transfers(
 
 
 def plan_pull_transfers(
-    sftp, remote_root: str, *, exclude_from: Path, extra_excludes: list[str]
+    sftp,
+    remote_root: str,
+    *,
+    exclude_from: Path | None = None,
+    extra_excludes: list[str] | None = None,
+    includes: list[str] | None = None,
 ) -> list[TransferPlan]:
     import stat
 
-    matcher = build_matcher(exclude_from, extra_excludes)
+    matcher = build_matcher(exclude_from, extra_excludes or [], includes)
     plans: list[TransferPlan] = []
 
     def walk(prefix: str) -> None:

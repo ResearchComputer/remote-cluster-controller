@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import typer
@@ -58,12 +59,19 @@ def submit(
 
 
 def list_jobs(
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit a JSON array of {JobID, Name, Partition, State, ...}."
+    ),
     profile: str | None = typer.Option(None, "--profile"),
     host: str | None = typer.Option(None, "--host"),
     remote_dir: str | None = typer.Option(None, "--remote-dir"),
 ) -> None:
     """List your Slurm jobs (squeue)."""
     resolved = _resolve(profile, host, remote_dir)
+    if json_output:
+        rows = slurm.list_jobs_json(resolved)
+        typer.echo(json.dumps(rows, indent=2))
+        return
     code = slurm.list_jobs(resolved)
     if code != 0:
         raise RemoteError("squeue exited non-zero", exit_code=code)
@@ -71,12 +79,22 @@ def list_jobs(
 
 def status(
     job_id: str = typer.Argument(..., help="Slurm JOBID."),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit a JSON array of sacct records (main job + steps); each row "
+        "gains parsed exit_code/signal and an ok flag.",
+    ),
     profile: str | None = typer.Option(None, "--profile"),
     host: str | None = typer.Option(None, "--host"),
     remote_dir: str | None = typer.Option(None, "--remote-dir"),
 ) -> None:
     """Show accounting info for a job (sacct)."""
     resolved = _resolve(profile, host, remote_dir)
+    if json_output:
+        rows = slurm.status_json(resolved, job_id)
+        typer.echo(json.dumps(rows, indent=2))
+        return
     code = slurm.status(resolved, job_id)
     if code != 0:
         raise RemoteError("sacct exited non-zero", exit_code=code)
@@ -112,6 +130,33 @@ def cancel(
     code = slurm.cancel(resolved, job_id)
     if code != 0:
         raise RemoteError("scancel exited non-zero", exit_code=code)
+
+
+def wait(
+    job_id: str = typer.Argument(..., help="Slurm JOBID."),
+    on: str | None = typer.Option(
+        None,
+        "--on",
+        metavar="STATE",
+        help="Return as soon as the job reaches STATE (e.g. RUNNING) instead of waiting for completion.",
+    ),
+    timeout: float | None = typer.Option(
+        None, "--timeout", metavar="SECONDS", help="Give up after SECONDS (exit 124)."
+    ),
+    profile: str | None = typer.Option(None, "--profile"),
+    host: str | None = typer.Option(None, "--host"),
+    remote_dir: str | None = typer.Option(None, "--remote-dir"),
+) -> None:
+    """Block until a Slurm job finishes (or reaches --on STATE).
+
+    Exits 0 on COMPLETED (or when ``--on`` is reached), the job's exit code on
+    failure, 124 on timeout (issue #2 P2). Pairs with ``job submit`` to close
+    the submit->monitor loop without ``sbatch --wait``'s minutes-long silence.
+    """
+    resolved = _resolve(profile, host, remote_dir)
+    code = slurm.wait(resolved, job_id, on=on, timeout=timeout)
+    if code != 0:
+        raise RemoteError(f"job {job_id} did not complete successfully", exit_code=code)
 
 
 def _split_env(item: str) -> tuple[str, str]:

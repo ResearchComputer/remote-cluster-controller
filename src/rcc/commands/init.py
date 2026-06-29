@@ -14,6 +14,23 @@ host = "myhost"                # change me (ssh alias or user@host)
 remote_dir = "/path/on/remote" # change me
 # ssh_control_persist = "30m"
 # ssh_control_dir = "~/.ssh/controlmasters"
+
+# Bastion hop / explicit key (issue #2 P3):
+# proxy_jump = "bastion.example.com"
+# identity_file = "~/.ssh/id_ed25519"
+
+# Per-profile env defaults honored by `rcc run` (issue #2 P1):
+# [profiles.default.env]
+# TRITON_CACHE_DIR = "/scratch/cache"
+
+# Remote-owned paths to protect from --delete/--mirror (issue #2 P1):
+# keep_remote = ["logs/", "cache/", "*.safetensors", "last_service.env"]
+
+# Default port-forward for `rcc tunnel` (issue #2 P3):
+# [profiles.default.tunnel]
+# remote_port = 8080
+# local_port = 18080        # optional; defaults to remote_port
+# remote_host = "localhost" # optional; set to a compute node to reach it
 """
 
 _DEFAULT_IGNORE = """\

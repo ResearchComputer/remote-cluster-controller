@@ -18,6 +18,8 @@ from rcc.commands import push as push_cmd
 from rcc.commands import run as run_cmd
 from rcc.commands import shell as shell_cmd
 from rcc.commands import status as status_cmd
+from rcc.commands import tunnel as tunnel_cmd
+from rcc.commands import bg as bg_cmd
 from rcc.context import CliOverrides, set_cli_overrides
 from rcc.errors import ConfigError, MissingDependencyError, RccError, RemoteError
 
@@ -91,6 +93,20 @@ app.command(name="shell")(_wrap(shell_cmd.shell))
 app.command(name="status")(_wrap(status_cmd.status))
 app.command(name="close")(_wrap(close_cmd.close))
 app.command(name="config")(_wrap(config_cmd.config))
+app.command(name="tunnel")(_wrap(tunnel_cmd.tunnel))
+
+bg_app = typer.Typer(
+    help="Detached (background) runs for non-SLURM hosts, backed by tmux: "
+    "ps, logs, attach, wait, stop. Launch with `rcc run --detach`.",
+    no_args_is_help=True,
+    add_completion=False,
+)
+bg_app.command(name="ps")(_wrap(bg_cmd.ps))
+bg_app.command(name="logs")(_wrap(bg_cmd.logs))
+bg_app.command(name="attach")(_wrap(bg_cmd.attach))
+bg_app.command(name="wait")(_wrap(bg_cmd.wait))
+bg_app.command(name="stop")(_wrap(bg_cmd.stop))
+app.add_typer(bg_app, name="bg")
 
 job_app = typer.Typer(
     help="Slurm job management: submit, list, status, tail, cancel.",
@@ -102,6 +118,7 @@ job_app.command(name="list")(_wrap(job_cmd.list_jobs))
 job_app.command(name="status")(_wrap(job_cmd.status))
 job_app.command(name="tail")(_wrap(job_cmd.tail))
 job_app.command(name="cancel")(_wrap(job_cmd.cancel))
+job_app.command(name="wait")(_wrap(job_cmd.wait))
 app.add_typer(job_app, name="job")
 
 
