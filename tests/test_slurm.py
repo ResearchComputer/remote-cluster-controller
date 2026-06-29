@@ -46,9 +46,7 @@ def test_submit_argv_dependency():
 
 def test_submit_argv_combined_order():
     # flags precede the script; dependency before wait — locked so future edits stay sane.
-    argv = slurm.submit_argv(
-        "job.sh", [("E", "2")], wait=True, dependency="afterok:1"
-    )
+    argv = slurm.submit_argv("job.sh", [("E", "2")], wait=True, dependency="afterok:1")
     assert argv == [
         "sbatch",
         "--export=ALL,E=2",
@@ -159,9 +157,11 @@ def test_submit_dependency_passed_through(capsys):
 def test_submit_wait_streams_and_propagates_exit_code():
     # --wait must stream (run_remote), not capture/parse, and return sbatch's
     # exit code verbatim (== the job's exit code).
-    with patch("rcc.slurm.run_remote") as run, patch(
-        "rcc.slurm.run_remote_capture"
-    ) as cap, patch("rcc.slurm.ensure_slurm"):
+    with (
+        patch("rcc.slurm.run_remote") as run,
+        patch("rcc.slurm.run_remote_capture") as cap,
+        patch("rcc.slurm.ensure_slurm"),
+    ):
         run.return_value = 7
         assert slurm.submit(make_profile(), "job.sh", wait=True) == 7
         sent = run.call_args.args[1]

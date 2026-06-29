@@ -491,8 +491,8 @@ wheels = [
 ]
 
 [[package]]
-name = "rcc"
-version = "0.1.0"
+name = "remote-cluster-controller"
+version = "0.3.0"
 source = { editable = "." }
 dependencies = [
     { name = "paramiko" },

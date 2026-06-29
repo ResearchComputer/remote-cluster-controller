@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from rcc._paramiko_fallback import plan_pull_transfers, plan_push_transfers
-from rcc._rsync import build_rsync_argv, run_rsync
+from rcc._rsync import DryRunSummary, build_rsync_argv, run_rsync
 from rcc.config import Profile
 from rcc.errors import RemoteError
 from rcc.sync import _local_prune, pull, push
@@ -147,8 +147,9 @@ def test_push_falls_back_when_rsync_missing(rcc_project: Path):
 def test_pull_prefers_rsync_when_available(rcc_project: Path):
     with (
         patch("rcc.sync.shutil.which", side_effect=lambda name: f"/usr/bin/{name}"),
-        patch("rcc.sync.run_rsync") as run_r,
+        patch("rcc.sync.run_rsync_dry_run") as dry,
     ):
+        dry.return_value = DryRunSummary()
         pull(
             project_dir=rcc_project,
             profile=make_profile(),
@@ -156,7 +157,7 @@ def test_pull_prefers_rsync_when_available(rcc_project: Path):
             delete=False,
             extra_excludes=[],
         )
-        assert "--dry-run" in run_r.call_args.args[0]
+        assert "--dry-run" in dry.call_args.args[0]
 
 
 def test_local_prune_preserves_ignored_paths(tmp_path: Path):
