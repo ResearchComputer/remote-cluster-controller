@@ -1,0 +1,83 @@
+# Release to PyPI via trusted publishing (OIDC).
+#
+# No long-lived tokens: PyPI trusts this workflow because it is registered as a
+# publisher on the project (see README → "Releasing"). The publish job runs under
+# the `pypi` GitHub environment with `id-token: write`, so the
+# `pypa/gh-action-pypi-publish` action mints a short-lived OIDC token at publish
+# time. To cut over to this path you must register the publisher on PyPI once:
+#
+#   https://pypi.org/manage/project/remote-cluster-controller/settings/publishing/
+#     Owner:        ResearchComputer
+#     Repository:   remote-cluster-controller
+#     Workflow:     release.yml
+#     Environment:  pypi
+#
+# Release: tag a release like `git tag v0.3.1 && git push --tags`. The tag MUST
+# match the `version` in pyproject.toml (a step below enforces this).
+
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+# Default token only needs read access to the repo for building.
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build sdist + wheel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify tag matches project version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          set -euo pipefail
+          VERSION=$(python3 -c "import tomllib; print(tomllib.loads(open('pyproject.toml','rb').read().decode())['project']['version'])")
+          echo "pyproject.toml version: ${VERSION}"
+          echo "git tag:                ${GITHUB_REF_NAME}"
+          if [ "v${VERSION}" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::git tag '${GITHUB_REF_NAME}' does not match version 'v${VERSION}' from pyproject.toml. Bump pyproject.toml and re-tag."
+            exit 1
+          fi
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v8
+
+      - name: Build distributions
+        run: uv build
+
+      - name: Check package metadata
+        run: uvx twine check dist/*
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    # The `pypi` environment is what PyPI's trusted publisher pins to (see the
+    # header comment). Add required reviewers to it under repo Settings →
+    # Environments → pypi to require a manual approval before any publish.
+    environment: pypi
+    permissions:
+      id-token: write # OIDC: lets the publish action request a PyPI token.
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release-v1

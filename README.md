@@ -249,6 +249,56 @@ to validate:
 `rcc config --json`, `rcc status --json`, **and** `rcc job list/status --json`
 *are* available.
 
+## Releasing (maintainers)
+
+Releases are published to PyPI via [**trusted publishing**](https://docs.pypi.org/trusted-publishers/) (OIDC): no API tokens are stored anywhere. A GitHub Actions workflow (`.github/workflows/release.yml`) builds the sdist + wheel and publishes under the `pypi` environment, where PyPI trusts it by repository + workflow filename + environment.
+
+### One-time setup (PyPI web UI)
+
+Only the PyPI project owner can do this. Go to
+<https://pypi.org/manage/project/remote-cluster-controller/settings/publishing/>,
+under **Add a publisher → GitHub**, and register:
+
+| Field | Value |
+|---|---|
+| Owner | `ResearchComputer` |
+| Repository | `remote-cluster-controller` |
+| Workflow name | `release.yml` |
+| Environment name | `pypi` |
+
+(The `Environment name` must match the `environment: pypi` line in the workflow.)
+
+Until this is done, the first publish run will fail at the `Publish to PyPI` step
+with a clear PyPI error about an unknown publisher.
+
+Optional hardening: under the repo's **Settings → Environments → `pypi`**, add a
+required reviewer so every publish needs a manual approval.
+
+### Cutting a release
+
+The git tag drives the release and **must match** the `version` in
+`pyproject.toml` (a workflow step enforces this, so a mismatch fails fast
+instead of publishing the wrong version):
+
+```bash
+# 1. bump version in pyproject.toml and src/rcc/__init__.py
+# 2. commit, then:
+git tag v0.3.1
+git push origin v0.3.1
+```
+
+Pushing the tag triggers the workflow. Watch it:
+
+```bash
+gh run watch
+```
+
+There is also a `workflow_dispatch` trigger (Actions tab → Run workflow) for
+re-runs; it publishes whatever `version` is in `pyproject.toml` on the selected
+branch.
+
+## Design
+
 See the design docs for the full picture:
 
 - [`docs/superpowers/specs/2026-04-23-rcc-design.md`](docs/superpowers/specs/2026-04-23-rcc-design.md) — original v1 design.
