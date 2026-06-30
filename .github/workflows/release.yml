@@ -47,7 +47,9 @@ jobs:
           fi
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v8
+        # setup-uv v8 stopped publishing moving major tags ("Immutable releases
+        # and secure tags"); pin to an immutable point release.
+        uses: astral-sh/setup-uv@v8.2.0
 
       - name: Build distributions
         run: uv build
