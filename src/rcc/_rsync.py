@@ -41,7 +41,16 @@ def build_rsync_argv(
     mirror: bool = False,
     keep_remote: list[str] | None = None,
     source_trailing_slash: bool = True,
+    verbose: bool | None = None,
 ) -> list[str]:
+    # The stats2 block is always emitted: even quiet runs parse it into a
+    # one-line summary (issue #6). progress2 renders live under --verbose.
+    # When verbose, also ask rsync for its own per-file detail so "present all"
+    # means the full file list, not just a progress bar.
+    if verbose is None:
+        from rcc.context import is_verbose
+
+        verbose = is_verbose()
     argv: list[str] = [
         "rsync",
         "-a",
@@ -50,6 +59,8 @@ def build_rsync_argv(
         "--info=stats2,progress2",
         "--partial",
     ]
+    if verbose:
+        argv.append("-v")
     if exclude_from is not None and not no_ignore:
         argv.append(f"--exclude-from={exclude_from}")
     argv.extend(f"--exclude={pattern}" for pattern in extra_excludes)
@@ -92,12 +103,51 @@ def _with_trailing_slash(value: Path | str) -> str:
     return text if text.endswith("/") else f"{text}/"
 
 
-def run_rsync(argv: list[str]) -> None:
-    result = subprocess.run(argv)
+def run_rsync(
+    argv: list[str],
+    *,
+    label: str = "",
+    direction: str | None = None,
+    verbose: bool | None = None,
+) -> None:
+    """Run a real (non-dry) rsync.
+
+    Output policy (issue #6): by default we stay quiet and surface only a
+    one-line summary parsed from rsync's stats block; under ``--verbose`` we get
+    out of the way and let rsync stream straight to the terminal so the live
+    progress bar and per-file output render as rsync intends.
+    """
+    if verbose is None:
+        from rcc.context import is_verbose
+
+        verbose = is_verbose()
+    if verbose:
+        result = subprocess.run(argv)
+        if result.returncode != 0:
+            raise RemoteError(
+                f"rsync exited with code {result.returncode}", exit_code=result.returncode
+            )
+        return
+    # Quiet default: capture everything, then report only the essentials.
+    result = subprocess.run(argv, capture_output=True, text=True)
     if result.returncode != 0:
         raise RemoteError(
-            f"rsync exited with code {result.returncode}", exit_code=result.returncode
+            _rsync_error_message(result.returncode, result.stderr),
+            exit_code=result.returncode,
         )
+    print(format_transfer_summary(result.stdout, label=label, direction=direction))
+
+
+def _rsync_error_message(code: int, stderr: str | None) -> str:
+    msg = f"rsync exited with code {code}"
+    tail = (stderr or "").strip()
+    if tail:
+        # rsync reports the cause on stderr; keep the last few meaningful lines
+        # so users don't need --verbose just to see why it failed.
+        lines = [ln for ln in tail.splitlines() if ln.strip()]
+        snippet = "\n".join(lines[-3:])
+        msg = f"{msg}:\n{snippet}"
+    return msg
 
 
 def run_rsync_dry_run(argv: list[str]) -> DryRunSummary:
@@ -154,6 +204,70 @@ def format_dry_run_summary(
         for path in summary.transfers:
             lines.append(f"  + {path}")
     return "\n".join(lines)
+
+
+# --------------------------------------------------------------------------- #
+# Real-transfer summary (issue #6): parse rsync's --info=stats2 block into a
+# single line so the default push/pull isn't a wall of progress+stats noise.
+# --------------------------------------------------------------------------- #
+_TRANSFERRED_RE = re.compile(r"Number of regular files transferred:\s*([\d,]+)")
+_DELETED_RE = re.compile(r"Number of deleted files:\s*([\d,]+)")
+# "sent 132 bytes  received 35 bytes"  (or, with --human-readable, "500.00K bytes")
+_BYTES_RE = re.compile(r"sent\s+(\S+)\s+bytes\s+received\s+(\S+)\s+bytes")
+
+
+def _parse_count(text: str, pattern: re.Pattern[str]) -> int | None:
+    m = pattern.search(text)
+    if not m:
+        return None
+    try:
+        return int(m.group(1).replace(",", ""))
+    except ValueError:
+        return None
+
+
+def format_transfer_summary(
+    output: str, *, label: str = "", direction: str | None = None
+) -> str:
+    """Render a real rsync transfer as one concise line.
+
+    ``direction`` ("upload"/"download") picks the verb (Pushed/Pulled) and which
+    byte count to highlight — ``sent`` for a push, ``received`` for a pull.
+    Falls back gracefully if rsync emitted no stats block at all.
+    """
+    verb = {"upload": "Pushed", "download": "Pulled"}.get(
+        (direction or "").lower(), "Transferred"
+    )
+    files = _parse_count(output, _TRANSFERRED_RE)
+    deleted = _parse_count(output, _DELETED_RE)
+    size_token = None
+    bytes_match = _BYTES_RE.search(output)
+    if bytes_match:
+        size_token = bytes_match.group(2) if direction == "download" else bytes_match.group(1)
+
+    bits: list[str] = []
+    if files is not None and files != 0:
+        # Bytes are only meaningful alongside actual file transfers; on a no-op
+        # rsync still sends ~20 bytes of protocol noise we don't want to surface.
+        bits.append(f"{files} file{'s' if files != 1 else ''}")
+        if size_token is not None:
+            unit = "received" if direction == "download" else "sent"
+            # size_token is already human-readable ("500.00K"/"132"); append a "B".
+            bits.append(f"({size_token}B {unit})")
+
+    if not bits and deleted:
+        body = "nothing transferred"
+    elif not bits:
+        body = "no changes"
+    else:
+        body = " ".join(bits)
+
+    line = f"{verb} {body}"
+    if deleted:
+        line += f", deleted {deleted}"
+    if label:
+        line += f" \u2192 {label}"
+    return line
 
 
 # rsync itemize-changes lines look like:

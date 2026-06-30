@@ -258,7 +258,7 @@ def _invoke(argv: list[str], *, dry_run: bool, label: str, direction: str) -> No
         summary = run_rsync_dry_run(argv)
         print(format_dry_run_summary(summary, label=label, direction=direction))
         return
-    run_rsync(argv)
+    run_rsync(argv, label=label, direction=direction)
 
 
 def _normalize_paths(paths: list[str], *, base: Path, check_local: bool = True) -> list[str]:

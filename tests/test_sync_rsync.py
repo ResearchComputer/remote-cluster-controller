@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
@@ -10,8 +11,12 @@ from rcc._rsync import (
     build_rsync_argv,
     classify_dry_run_output,
     format_dry_run_summary,
+    format_transfer_summary,
+    run_rsync,
 )
 from rcc.config import Profile
+from rcc.context import set_verbose
+from rcc.errors import RemoteError
 from rcc.errors import ConfigError, MissingDependencyError
 from rcc.sync import _normalize_paths, pull, push
 
@@ -356,3 +361,170 @@ def test_real_rsync_keep_remote_protects_under_mirror(tmp_path: Path):
     run_rsync(argv)
     assert (remote / "logs" / "v.txt").exists()  # keep_remote survived mirror
     assert not (remote / "orphan.txt").exists()  # mirror deleted the non-protected
+
+
+# ----------------------- transfer summary (issue #6) ----------------------- #
+
+
+_STATS = (
+    "Number of created files: 1\n"
+    "Number of deleted files: 0\n"
+    "Number of regular files transferred: 1\n"
+    "Total file size: 6 bytes\n"
+    "sent 132 bytes  received 35 bytes  334.00 bytes/sec\n"
+    "total size is 6  speedup is 0.04\n"
+)
+
+
+def test_format_transfer_summary_upload():
+    line = format_transfer_summary(_STATS, label="h:/srv/app/", direction="upload")
+    assert line == "Pushed 1 file (132B sent) \u2192 h:/srv/app/"
+
+
+def test_format_transfer_summary_download_uses_received():
+    line = format_transfer_summary(_STATS, label="h:/srv/app/", direction="download")
+    # pull highlights *received*, not sent
+    assert line == "Pulled 1 file (35B received) \u2192 h:/srv/app/"
+
+
+def test_format_transfer_summary_human_readable_and_deletions():
+    stats = (
+        "Number of regular files transferred: 42\n"
+        "Number of deleted files: 3\n"
+        "sent 12.34M bytes  received 4.56K bytes\n"
+    )
+    line = format_transfer_summary(stats, label="h:/srv/app/", direction="upload")
+    assert "42 files" in line
+    assert "(12.34MB sent)" in line
+    assert ", deleted 3" in line
+
+
+def test_format_transfer_summary_noop_reports_no_changes():
+    # files transferred == 0 and no deletions => "no changes", *not* protocol bytes
+    stats = (
+        "Number of regular files transferred: 0\n"
+        "Number of deleted files: 0\n"
+        "sent 20 bytes  received 12 bytes\n"
+    )
+    line = format_transfer_summary(stats, label="h:/srv/app/", direction="upload")
+    assert line == "Pushed no changes \u2192 h:/srv/app/"
+
+
+def test_format_transfer_summary_deletions_only():
+    stats = (
+        "Number of regular files transferred: 0\n"
+        "Number of deleted files: 5\n"
+        "sent 20 bytes  received 12 bytes\n"
+    )
+    line = format_transfer_summary(stats, label="h:/srv/app/", direction="upload")
+    assert "nothing transferred" in line
+    assert ", deleted 5" in line
+
+
+def test_format_transfer_summary_sans_stats_block_is_honest():
+    # No parseable stats at all => a safe fallback rather than a bare "Pushed"
+    line = format_transfer_summary("rsync: nothing to do\n", label="h:/srv/app/")
+    assert line == "Transferred no changes \u2192 h:/srv/app/"
+
+
+def test_format_transfer_summary_singular_file():
+    stats = "Number of regular files transferred: 1\nsent 10 bytes  received 1 bytes\n"
+    assert "1 file " in format_transfer_summary(stats, direction="upload")
+
+
+# ----------------------- run_rsync verbosity (issue #6) --------------------- #
+
+
+@pytest.fixture
+def _no_verbose():
+    """Ensure the global verbose flag is off around a test (ContextVar reset)."""
+    token = set_verbose(False)
+    yield
+    set_verbose(False)
+    del token
+
+
+def test_build_rsync_argv_verbose_adds_rsync_v(tmp_path: Path, _no_verbose):
+    quiet = build_rsync_argv(
+        source=tmp_path,
+        destination="h:/r",
+        e_string="ssh",
+        exclude_from=None,
+        extra_excludes=[],
+    )
+    assert "-v" not in quiet
+    verbose = build_rsync_argv(
+        source=tmp_path,
+        destination="h:/r",
+        e_string="ssh",
+        exclude_from=None,
+        extra_excludes=[],
+        verbose=True,
+    )
+    assert "-v" in verbose
+    # the stats/progress info stays on in both modes (quiet parses stats2)
+    assert "--info=stats2,progress2" in quiet
+    assert "--info=stats2,progress2" in verbose
+
+
+def test_run_rsync_quiet_captures_and_prints_summary(_no_verbose, capsys):
+    captured = {}
+
+    def fake_run(argv, **kwargs):
+        captured["kwargs"] = kwargs
+        return subprocess.CompletedProcess(
+            args=argv, returncode=0, stdout=_STATS, stderr=""
+        )
+
+    with patch("rcc._rsync.subprocess.run", side_effect=fake_run):
+        run_rsync(["rsync", "-a"], label="h:/srv/app/", direction="upload")
+    out = capsys.readouterr().out.strip()
+    # captured output (so the terminal stays quiet) and rendered as one summary
+    assert captured["kwargs"].get("capture_output") is True
+    assert out == "Pushed 1 file (132B sent) \u2192 h:/srv/app/"
+
+
+def test_run_rsync_verbose_streams_without_capture(_no_verbose, capsys):
+    set_verbose(True)
+    captured = {}
+
+    def fake_run(argv, **kwargs):
+        captured["kwargs"] = kwargs
+        return subprocess.CompletedProcess(args=argv, returncode=0)
+
+    with patch("rcc._rsync.subprocess.run", side_effect=fake_run):
+        run_rsync(["rsync", "-a"])
+    # verbose streams rsync verbatim: nothing captured, nothing summarized
+    assert captured["kwargs"] == {}
+    assert capsys.readouterr().out == ""
+
+
+def test_run_rsync_quiet_error_includes_stderr_tail(_no_verbose):
+    def fake_run(argv, **kwargs):
+        return subprocess.CompletedProcess(
+            args=argv,
+            returncode=23,
+            stdout="",
+            stderr="rsync: change_dir \"/nope\" failed: No such file (2)\n"
+            "rsync error: some files could not be transferred\n",
+        )
+
+    with patch("rcc._rsync.subprocess.run", side_effect=fake_run):
+        with pytest.raises(RemoteError) as exc_info:
+            run_rsync(["rsync", "-a"])
+    msg = str(exc_info.value)
+    assert "code 23" in msg
+    # the rsync cause is surfaced without needing --verbose
+    assert "No such file" in msg
+    assert exc_info.value.exit_code == 23
+
+
+def test_run_rsync_verbose_streams_on_error(_no_verbose):
+    set_verbose(True)
+    with patch(
+        "rcc._rsync.subprocess.run",
+        return_value=subprocess.CompletedProcess(args=[], returncode=23),
+    ):
+        with pytest.raises(RemoteError) as exc_info:
+            run_rsync(["rsync", "-a"])
+    assert exc_info.value.exit_code == 23

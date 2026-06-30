@@ -88,6 +88,30 @@ rcc push --no-ignore                 # bypass rccignore for a whole-project tran
 rcc push --include '*.bin'           # extra include globs
 ```
 
+### Output: quiet by default (issue #6)
+
+`push`/`pull` no longer dump rsync's progress bar and stats block at you. A
+real transfer prints a single summary line:
+
+```
+$ rcc push
+Pushed 42 files (12.34MB sent) → alpha:/srv/app/
+$ rcc pull
+Pulled 1 file (35B received) → alpha:/srv/app/
+```
+
+Pass `-v`/`--verbose` (a root flag, before the subcommand) to see everything
+rsync prints — the live progress bar, per-file list, and full stats:
+
+```
+$ rcc -v push
+sending incremental file list
+...
+```
+
+`--dry-run` output is unaffected (it was already concise). On failure the rsync
+stderr tail is surfaced so you don't need `--verbose` just to see *why*.
+
 ### Deletion safety
 
 The default is **non-destructive**. There are two distinct deletion modes:

@@ -13,9 +13,21 @@ class CliOverrides:
 
 _overrides: ContextVar[CliOverrides] = ContextVar("rcc_cli_overrides", default=CliOverrides())
 
+# Verbose flag (issue #6): the root -v/--verbose toggle. Default transfers are
+# quiet (one summary line); verbose streams everything rsync prints.
+_verbose: ContextVar[bool] = ContextVar("rcc_verbose", default=False)
+
 
 def set_cli_overrides(overrides: CliOverrides) -> None:
     _overrides.set(overrides)
+
+
+def set_verbose(value: bool) -> None:
+    _verbose.set(value)
+
+
+def is_verbose() -> bool:
+    return _verbose.get()
 
 
 def merge_cli_overrides(

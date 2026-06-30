@@ -20,7 +20,7 @@ from rcc.commands import shell as shell_cmd
 from rcc.commands import status as status_cmd
 from rcc.commands import tunnel as tunnel_cmd
 from rcc.commands import bg as bg_cmd
-from rcc.context import CliOverrides, set_cli_overrides
+from rcc.context import CliOverrides, is_verbose, set_cli_overrides, set_verbose
 from rcc.errors import ConfigError, MissingDependencyError, RccError, RemoteError
 
 P = ParamSpec("P")
@@ -33,9 +33,6 @@ app = typer.Typer(
     pretty_exceptions_enable=False,
 )
 
-_verbose = False
-
-
 @app.callback()
 def _root(
     verbose: bool = typer.Option(False, "-v", "--verbose", help="Verbose logging"),
@@ -43,8 +40,10 @@ def _root(
     host: str | None = typer.Option(None, "--host", help="Default host override"),
     remote_dir: str | None = typer.Option(None, "--remote-dir", help="Default remote dir override"),
 ) -> None:
-    global _verbose
-    _verbose = verbose
+    # Mirror verbose into the context (issue #6) so deep calls (rsync) can stay
+    # quiet by default and only open up under --verbose, without threading a
+    # flag through every signature.
+    set_verbose(verbose)
     set_cli_overrides(CliOverrides(profile=profile, host=host, remote_dir=remote_dir))
     logging.basicConfig(level=logging.DEBUG if verbose else logging.INFO, format="%(message)s")
 
@@ -62,7 +61,7 @@ def _handle_rcc_error(exc: Exception) -> None:
     if isinstance(exc, RccError):
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(code=1) from exc
-    if _verbose:
+    if is_verbose():
         raise exc
     typer.echo(f"error: {exc}", err=True)
     raise typer.Exit(code=1) from exc
