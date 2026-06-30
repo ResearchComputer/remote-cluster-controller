@@ -82,4 +82,6 @@ jobs:
           path: dist/
 
       - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release-v1
+        # gh-action-pypi-publish no longer publishes the moving release-v1 tag;
+        # pin to an immutable release.
+        uses: pypa/gh-action-pypi-publish@v1.14.0
